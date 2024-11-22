@@ -1,6 +1,7 @@
 ﻿using Microsoft.EntityFrameworkCore;
 using CaseStudy;
 using CaseStudy.Models;
+using Microsoft.Extensions.Options;
 
 var builder = WebApplication.CreateBuilder(args);
 

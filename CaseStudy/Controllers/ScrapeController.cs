@@ -16,6 +16,21 @@ public class ScrapeController : ControllerBase
         _context = context;
         _logger = logger;
     }
+    [HttpGet("scrape")]
+    public async Task<IActionResult> StartScraping()
+    {
+        try
+        {
+            _logger.LogInformation("Starting scraping process");
+            await _scraperService.ScrapeData();
+            return Ok(new { message = "Scraping completed successfully" });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error during scraping process");
+            return StatusCode(500, new { error = "An error occurred during scraping", details = ex.Message });
+        }
+    }
 
     [HttpGet("funds")]
     public async Task<IActionResult> GetAllFunds()
@@ -35,7 +50,9 @@ public class ScrapeController : ControllerBase
                         r.ThreeMonthReturn,
                         r.SixMonthReturn,
                         r.YearToDateReturn,
-                        r.OneYearReturn
+                        r.OneYearReturn,
+                        r.ThreeYearReturn,
+                        r.FiveYearReturn
                     }).FirstOrDefault()
                 })
                 .ToListAsync();
@@ -72,7 +89,9 @@ public class ScrapeController : ControllerBase
                     r.ThreeMonthReturn,
                     r.SixMonthReturn,
                     r.YearToDateReturn,
-                    r.OneYearReturn
+                    r.OneYearReturn,
+                    r.ThreeYearReturn,
+                    r.FiveYearReturn
                 }).FirstOrDefault()
             };
 
@@ -85,3 +104,4 @@ public class ScrapeController : ControllerBase
         }
     }
 }
+

@@ -10,7 +10,9 @@ namespace CaseStudy.Models
         public decimal? ThreeMonthReturn { get; set; }    
         public decimal? SixMonthReturn { get; set; }      
         public decimal? YearToDateReturn { get; set; }    
-        public decimal? OneYearReturn { get; set; }       
+        public decimal? OneYearReturn { get; set; }
+        public decimal? ThreeYearReturn { get; set; }
+        public decimal? FiveYearReturn { get; set; }
         public virtual Fund Fund { get; set; }
     }
 

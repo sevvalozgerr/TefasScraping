@@ -1,11 +1,12 @@
 ﻿using CaseStudy;
 using CaseStudy.Models;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.EntityFrameworkCore.Metadata.Internal;
 using OpenQA.Selenium;
 using OpenQA.Selenium.Chrome;
 using OpenQA.Selenium.Support.UI;
 using System.Globalization;
+using System.Security.Cryptography;
+using System.Text;
 
 public class ScraperService
 {
@@ -24,20 +25,16 @@ public class ScraperService
         {
             //deletes all records from table and relational records
             await _context.Database.ExecuteSqlRawAsync("TRUNCATE TABLE fund_returns CASCADE");
-
             await _context.Database.ExecuteSqlRawAsync("TRUNCATE TABLE fund CASCADE");
-
             await _context.SaveChangesAsync();
-
-            _logger.LogInformation("Db cleaned");
         }
         catch (Exception ex)
         {
-            _logger.LogError($"Error cleaning db: {ex.Message}");
+            _logger.LogError($"Error cleaning database: {ex.Message}");
             throw;
         }
     }
-    
+
     public async Task ScrapeData()
     {
         await CleanDatabase();
@@ -68,48 +65,49 @@ public class ScraperService
 
             try
             {
-                // XPath 
+                //XPath 
                 var getiriTab = wait.Until(d => d.FindElement(By.XPath("//a[contains(text(), 'Getiri')]")));
                 getiriTab.Click();
             }
             catch
             {
-                try
-                {
-                    // CSS 
-                    var getiriTab = wait.Until(d => d.FindElement(By.CssSelector("a[href='#tabs-1']")));
-                    getiriTab.Click();
-                }
-                catch
-                {
-                    // Js
-                    js.ExecuteScript("document.querySelector('a[href=\"#tabs-1\"]').click();");
-                }
+                //Js
+                js.ExecuteScript("document.querySelector('a[href=\"#tabs-1\"]').click();");
             }
 
             await Task.Delay(2000);
 
-            // Loop pages
+            // Page loop
             bool isNextPageAvailable = true;
+            string previousPageHash = string.Empty;
+
             while (isNextPageAvailable)
             {
                 var tableElement = wait.Until(d => d.FindElement(By.CssSelector("table#table_fund_returns")));
 
-                if (tableElement == null)
+                var tableHTML = js.ExecuteScript(@"return document.querySelector('#table_fund_returns').outerHTML;").ToString();
+
+                // Generate hash for current table content
+                string currentPageHash = GenerateHash(tableHTML);
+
+                if (currentPageHash == previousPageHash)
                 {
-                    tableElement = wait.Until(d => d.FindElement(By.XPath("//table[contains(@class, 'dataTable')]")));
+                    isNextPageAvailable = false; //no change
+                    break;
                 }
+
+                previousPageHash = currentPageHash; //update hash
 
                 var tableData = js.ExecuteScript(@"
                 const table = document.querySelector('#table_fund_returns');
                 if (!table) return [];
-               
+
                 const tbody = table.querySelector('tbody');
                 if (!tbody) return [];
-               
+
                 return Array.from(tbody.querySelectorAll('tr')).map(row => {
                    if (row.cells.length < 8) return null;
-                   
+
                    const fundCode = row.cells[0].textContent.trim();
                    if (!fundCode || fundCode.length < 2 || fundCode.length > 4 || 
                        fundCode.includes('PORTFÖY') || 
@@ -118,7 +116,7 @@ public class ScraperService
                        fundCode.includes('A.Ş.')) {
                        return null;
                    }
-                   
+
                    return Array.from(row.cells).map(cell => cell.textContent.trim());
                 }).filter(row => row !== null);
                 ");
@@ -131,7 +129,7 @@ public class ScraperService
                     try
                     {
                         var cells = row.Select(c => c.ToString()).ToList();
-                        if (cells.Count < 8) continue;
+                        if (cells.Count < 10) continue;
 
                         var fundCode = cells[0].Trim();
                         if (string.IsNullOrWhiteSpace(fundCode) ||
@@ -167,7 +165,9 @@ public class ScraperService
                                 ThreeMonthReturn = ParseDecimal(cells[4]),
                                 SixMonthReturn = ParseDecimal(cells[5]),
                                 YearToDateReturn = ParseDecimal(cells[6]),
-                                OneYearReturn = ParseDecimal(cells[7])
+                                OneYearReturn = ParseDecimal(cells[7]),
+                                ThreeYearReturn = ParseDecimal(cells[8]),
+                                FiveYearReturn = ParseDecimal(cells[9])
                             };
 
                             _context.FundReturns.Add(fundReturn);
@@ -184,7 +184,9 @@ public class ScraperService
                                 ThreeMonthReturn = ParseDecimal(cells[4]),
                                 SixMonthReturn = ParseDecimal(cells[5]),
                                 YearToDateReturn = ParseDecimal(cells[6]),
-                                OneYearReturn = ParseDecimal(cells[7])
+                                OneYearReturn = ParseDecimal(cells[7]),
+                                ThreeYearReturn = ParseDecimal(cells[8]),
+                                FiveYearReturn = ParseDecimal(cells[9])
                             };
 
                             _context.FundReturns.Add(fundReturn);
@@ -192,30 +194,22 @@ public class ScraperService
 
                         await _context.SaveChangesAsync();
                         await transaction.CommitAsync();
-
-                        _logger.LogInformation($"processed fund: {fundCode}");
                     }
                     catch (Exception ex)
                     {
                         await transaction.RollbackAsync();
                         _logger.LogError($"Error processing fund row: {ex.Message}");
-                        _logger.LogError($"Stack trace: {ex.StackTrace}");
-
-                        if (ex.InnerException != null)
-                        {
-                            _logger.LogError($"Inner exception: {ex.InnerException.Message}");
-                        }
                     }
                 }
 
-                //check next button and click
                 try
                 {
+                    //check last page
                     var nextButton = wait.Until(d => d.FindElement(By.XPath("//a[contains(text(), 'Sonraki')]")));
                     if (nextButton != null && nextButton.Displayed)
                     {
                         nextButton.Click();
-                        await Task.Delay(2000);  
+                        await Task.Delay(2000);
                     }
                     else
                     {
@@ -224,14 +218,9 @@ public class ScraperService
                 }
                 catch
                 {
-                    isNextPageAvailable = false; //no next button
+                    isNextPageAvailable = false;
                 }
             }
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError($"Scraping error: {ex.Message}");
-            throw;
         }
         finally
         {
@@ -244,26 +233,53 @@ public class ScraperService
     {
         try
         {
+            //null check
             if (string.IsNullOrWhiteSpace(value) || value == "-")
                 return null;
 
-            value = value.Replace("%", "").Trim().Replace(",", ".");
+            //cleaning % and space 
+            value = value
+                .Replace("%", "") 
+                .Replace(" ", "") 
+                .Trim();
 
-            if (decimal.TryParse(value, NumberStyles.Any, CultureInfo.InvariantCulture, out var result))
+           
+            if (value.Contains(",") && value.Contains("."))
+            {
+                value = value.Replace(".", "").Replace(",", ".");
+            }
+            else
+            {
+                value = value.Replace(",", ".");
+            }
+
+         
+            if (decimal.TryParse(value,
+                NumberStyles.Any | NumberStyles.AllowDecimalPoint,
+                CultureInfo.InvariantCulture,
+                out decimal result))
             {
                 return result;
             }
 
-            _logger.LogWarning($"Could not parse: {value}");
+            _logger.LogWarning($"Could not parse decimal value: {value}");
             return null;
         }
         catch (Exception ex)
         {
-            _logger.LogError($"Error parsing '{value}': {ex.Message}");
+            _logger.LogError($"Error parsing decimal '{value}': {ex.Message}");
             return null;
         }
     }
-    
 
 
+
+    //generate hash SHA256.
+    private string GenerateHash(string input)
+    {
+        using var sha256 = SHA256.Create();
+        var bytes = Encoding.UTF8.GetBytes(input);
+        var hash = sha256.ComputeHash(bytes);
+        return Convert.ToBase64String(hash);
+    }
 }
